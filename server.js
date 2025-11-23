@@ -6,6 +6,8 @@ const cookieParser = require("cookie-parser");
 const logger = require("./middleware/logger");
 const errorHandler = require("./middleware/errorHandler");
 const authMiddleware = require("./middleware/auth");
+
+const trialRoutes = require("./routes/trial.analyze");
 dotenv.config();
 
 /* ---------------------- ROUTES ---------------------- */
@@ -37,7 +39,7 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // AUTH (no auth middleware here)
 app.use("/auth", authRoutes);
-
+app.use("/api/trial", trialRoutes);
 // ACCOUNT ROUTES
 app.use("/api/account", authMiddleware, accountRoutes);
 
