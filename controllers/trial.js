@@ -99,3 +99,62 @@ exports.joinTrial = async (req, res) => {
         return res.status(500).json({ message: "Internal server error" });
     }
 };
+
+// -----------------------------------------
+// CLEANUP JOB (Delete expired trials)
+// -----------------------------------------
+exports.cleanupExpiredTrials = async () => {
+    try {
+        const now = new Date().toISOString();
+
+        // 1. Find expired sessions
+        const { data: expiredSessions, error: findError } = await supabase
+            .from("trial_sessions")
+            .select("id, created_at")
+            .lt("expires_at", now);
+
+        if (findError) {
+            console.error("Cleanup: Failed to find expired sessions", findError);
+            return;
+        }
+
+        if (!expiredSessions || expiredSessions.length === 0) {
+            return; // No expired sessions
+        }
+
+        console.log(`🧹 Cleaning up ${expiredSessions.length} expired trial sessions...`);
+
+        for (const session of expiredSessions) {
+            const sessionId = session.id;
+
+            // 2. Delete files from storage (recursively)
+            // Note: Supabase Storage doesn't have a simple "delete folder", 
+            // so we list and delete files.
+            try {
+                const { data: files } = await supabase.storage
+                    .from("trial_analyses")
+                    .list(sessionId);
+
+                if (files && files.length > 0) {
+                    const filesToDelete = files.map(f => `${sessionId}/${f.name}`);
+                    await supabase.storage
+                        .from("trial_analyses")
+                        .remove(filesToDelete);
+                }
+            } catch (storageErr) {
+                console.error(`Cleanup: Storage delete failed for ${sessionId}`, storageErr);
+            }
+
+            // 3. Delete from DB
+            await supabase
+                .from("trial_sessions")
+                .delete()
+                .eq("id", sessionId);
+        }
+
+        console.log("✅ Cleanup complete");
+
+    } catch (err) {
+        console.error("Cleanup job error:", err);
+    }
+};

@@ -9,7 +9,111 @@ const authMiddleware = require('../middleware/auth');
 const upload = multer({ storage: multer.memoryStorage() });
 
 // ✅ DOWNLOAD route - MOST SPECIFIC - FIRST
-// ✅ DOWNLOAD route - MOST SPECIFIC - FIRST
+// ✅ GET ORIGINAL FILE route (for display)
+router.get('/:id/file', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id;
+
+    // ---------------------------------------------------------
+    // TRIAL USER FLOW
+    // ---------------------------------------------------------
+    if (req.user?.isTrial) {
+      try {
+        const decoded = Buffer.from(id, 'base64').toString('utf8');
+        if (decoded.startsWith('trial|')) {
+          const parts = decoded.split('|');
+          const type = parts[1];
+          const bucket = parts[2];
+          let filePath = '';
+
+          if (type === 'image') {
+            // trial|image|bucket|[paths] -> paths[0] is original?
+            // Actually in upload logic: paths[0] is stored as full path in array?
+            // Let's check upload logic: `const filePath = ...` -> pushed to paths.
+            // Yes.
+            const paths = JSON.parse(parts.slice(3).join('|'));
+            filePath = paths[0]; // Original image is typically the first or only path
+          } else {
+            return res.status(400).json({ message: 'Not an image analysis' });
+          }
+
+          if (bucket && filePath) {
+            const { data, error } = await supabaseAdmin.storage.from(bucket).download(filePath);
+            if (error) throw error;
+            const buffer = Buffer.from(await data.arrayBuffer());
+            res.set('Content-Type', 'image/jpeg'); // Or detect from file ext
+            return res.send(buffer);
+          }
+        }
+      } catch (e) {
+        console.error('Trial file fetch error:', e);
+      }
+      return res.status(404).json({ message: 'File not found' });
+    }
+
+    // ---------------------------------------------------------
+    // STANDARD USER FLOW
+    // ---------------------------------------------------------
+    const { data: analysis, error } = await supabaseAdmin
+      .from('analyses')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !analysis) {
+      return res.status(404).json({ message: 'Analysis not found' });
+    }
+
+    // Original file path is stored in `file_path` column
+    if (!analysis.file_path) {
+      return res.status(404).json({ message: 'File path missing' });
+    }
+
+    // Fix: For images, file_path is a JSON array string ["path"] or an actual Array (if JSONB)
+    let filePath = analysis.file_path;
+
+    if (Array.isArray(filePath) && filePath.length > 0) {
+      filePath = filePath[0];
+    } else if (typeof filePath === 'string' && filePath.trim().startsWith('[')) {
+      try {
+        const paths = JSON.parse(filePath);
+        if (Array.isArray(paths) && paths.length > 0) {
+          filePath = paths[0]; // Take the first image
+        }
+      } catch (e) {
+        console.warn('Failed to parse file_path JSON:', e);
+      }
+    }
+
+    // Determine bucket: Default to 'video_analyses' only if not clearly an image
+    let bucket = analysis.bucket;
+    if (!bucket) {
+      const isImage = analysis.filename?.match(/\.(jpg|jpeg|png|webp|gif)$/i) || analysis.file_type?.startsWith('image/');
+      bucket = isImage ? 'image_analyses' : 'video_analyses';
+    }
+
+    const { data, error: dlError } = await supabaseAdmin.storage
+      .from(bucket)
+      .download(filePath);
+
+    if (dlError) {
+      console.error('❌ Storage download error:', dlError); // Log full object
+      throw dlError;
+    }
+
+    const buffer = Buffer.from(await data.arrayBuffer());
+    res.set('Content-Type', analysis.file_type || 'application/octet-stream');
+    res.send(buffer);
+
+  } catch (error) {
+    console.error('File fetch error:', error);
+    res.status(500).json({ message: 'Error fetching file', error: error.message || error });
+  }
+});
+
+// Download route (unchanged)
 router.get('/:id/download', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;

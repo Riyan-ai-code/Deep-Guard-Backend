@@ -145,7 +145,27 @@ exports.sendSignupOtp = async (req, res) => {
       from: `"Deep Guard" <${process.env.EMAIL_USER}>`,
       to: normalized,
       subject: "Verify your account",
-      html: `<h1>${otp}</h1>`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #f9f9f9;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <h2 style="color: #333;">Deep Guard</h2>
+          </div>
+          <div style="background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <p style="color: #555; font-size: 16px;">Hello ${name || 'User'},</p>
+            <p style="color: #555; font-size: 16px;">Thank you for signing up with Deep Guard. To complete your registration, please use the verification code below:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <span style="font-size: 32px; font-weight: bold; color: #4F46E5; letter-spacing: 5px; background: #EEF2FF; padding: 10px 20px; border-radius: 5px; border: 1px dashed #4F46E5;">
+                ${otp}
+              </span>
+            </div>
+            <p style="color: #555; font-size: 14px;">This code will expire in 5 minutes.</p>
+            <p style="color: #888; font-size: 12px; margin-top: 20px;">If you did not request this code, please ignore this email.</p>
+          </div>
+          <div style="text-align: center; margin-top: 20px; color: #aaa; font-size: 12px;">
+            &copy; ${new Date().getFullYear()} Deep Guard. All rights reserved.
+          </div>
+        </div>
+      `,
     });
 
     res.json({ success: true });
@@ -217,7 +237,7 @@ exports.login = async (req, res) => {
       .eq("email", normalized)
       .single();
 
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
+    if (!user) return res.status(404).json({ message: "User does not exist" });
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid)
@@ -321,7 +341,27 @@ exports.sendResetOtp = async (req, res) => {
       from: `"Deep Guard" <${process.env.EMAIL_USER}>`,
       to: normalized,
       subject: "Reset Password",
-      html: `<h1>${otp}</h1>`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background-color: #f9f9f9;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <h2 style="color: #333;">Deep Guard</h2>
+          </div>
+          <div style="background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <p style="color: #555; font-size: 16px;">Hello,</p>
+            <p style="color: #555; font-size: 16px;">You requested to reset your password. Use the code below to proceed:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <span style="font-size: 32px; font-weight: bold; color: #DC2626; letter-spacing: 5px; background: #FEF2F2; padding: 10px 20px; border-radius: 5px; border: 1px dashed #DC2626;">
+                ${otp}
+              </span>
+            </div>
+            <p style="color: #555; font-size: 14px;">This code will expire in 5 minutes.</p>
+            <p style="color: #888; font-size: 12px; margin-top: 20px;">If you did not request a password reset, please ignore this email immediately.</p>
+          </div>
+          <div style="text-align: center; margin-top: 20px; color: #aaa; font-size: 12px;">
+            &copy; ${new Date().getFullYear()} Deep Guard. All rights reserved.
+          </div>
+        </div>
+      `,
     });
 
     res.json({ success: true });
