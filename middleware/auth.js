@@ -6,8 +6,8 @@ const crypto = require("crypto");
 // Must match controller cookie options
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "strict",
+  secure: true,
+  sameSite: "none",
   path: "/",
 };
 
