@@ -14,7 +14,7 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
-  sameSite: "strict",
+  sameSite: "lax",
   path: "/"
 };
 
@@ -406,18 +406,12 @@ exports.refresh = async (req, res) => {
       return res.status(401).json({ message: "Token version invalid" });
     }
 
-    // 4. Rotate refresh token
+    // 4. Rotate refresh token (With Grace Period)
     const newAccess = createAccessToken(user.id, user.email, user.token_version);
     const newRefresh = createRefreshToken(user.id, user.email, user.token_version);
     const newHash = hashToken(newRefresh);
 
-    // delete old session
-    await supabase
-      .from("sessions")
-      .delete()
-      .eq("refresh_token_hash", hashed);
-
-    // insert new session
+    // Create NEW session
     await supabase.from("sessions").insert({
       user_id: user.id,
       refresh_token_hash: newHash,
@@ -426,6 +420,15 @@ exports.refresh = async (req, res) => {
       ip_address: req.ip,
       expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
     });
+
+    // Mark old session for deletion (Grace Period of 10 seconds)
+    setTimeout(async () => {
+      try {
+        await supabase.from("sessions").delete().eq("id", session.id);
+      } catch (e) {
+        console.error("Failed to cleanup old session:", e);
+      }
+    }, 10000); // 10 seconds grace period
 
     // 5. Set new cookies
     setAuthCookies(res, newAccess, newRefresh);
