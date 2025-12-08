@@ -9,6 +9,7 @@ const authMiddleware = require('../middleware/auth');
 const upload = multer({ storage: multer.memoryStorage() });
 
 // ✅ DOWNLOAD route - MOST SPECIFIC - FIRST
+// ✅ DOWNLOAD route - MOST SPECIFIC - FIRST
 router.get('/:id/download', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -16,7 +17,56 @@ router.get('/:id/download', authMiddleware, async (req, res) => {
 
     console.log(`\n📥 DOWNLOAD REPORT: ${req.method} ${req.path}`);
     console.log('analysisId:', id);
-    console.log('userId:', userId);
+
+    // ---------------------------------------------------------
+    // TRIAL USER FLOW (Stateless Download)
+    // ---------------------------------------------------------
+    if (req.user?.isTrial) {
+      try {
+        const decoded = Buffer.from(id, 'base64').toString('utf8');
+        if (decoded.startsWith('trial|')) {
+          console.log('🧪 Downloading TRIAL analysis (Stateless)');
+          const parts = decoded.split('|');
+          const type = parts[1];
+          const bucket = parts[2];
+          let zipPath = '';
+
+          if (type === 'video') {
+            // trial|video|bucket|path
+            const fullPath = parts.slice(3).join('|');
+            const folder = fullPath.split('/').slice(0, -1).join('/');
+            zipPath = `${folder}/annotated_frames.zip`;
+          } else if (type === 'image') {
+            // trial|image|bucket|[paths]
+            try {
+              const paths = JSON.parse(parts.slice(3).join('|'));
+              const folder = paths[0].split('/').slice(0, 2).join('/');
+              zipPath = `${folder}/annotated_images.zip`;
+            } catch (e) { console.error('Error parsing image paths for download', e); }
+          }
+
+          if (bucket && zipPath) {
+            console.log(`Downloading zip from: ${zipPath}`);
+            const { data: zipData, error: downloadError } = await supabaseAdmin
+              .storage
+              .from(bucket)
+              .download(zipPath);
+
+            if (downloadError) throw downloadError;
+
+            const zipBuffer = Buffer.from(await zipData.arrayBuffer());
+            console.log(`✅ Downloaded ZIP: ${zipBuffer.length} bytes`);
+
+            res.set('Content-Type', 'application/zip');
+            res.set('Content-Disposition', `attachment; filename="analysis_${id}_report.zip"`);
+            return res.send(zipBuffer);
+          }
+        }
+      } catch (e) {
+        console.error('Trial download error:', e);
+      }
+      return res.status(404).json({ message: 'Trial report not found' });
+    }
 
     if (!userId) {
       console.error('❌ userId is missing');
@@ -31,18 +81,28 @@ router.get('/:id/download', authMiddleware, async (req, res) => {
       .eq('user_id', userId)
       .single();
 
-    if (error || !analysis || !analysis.annotated_frames_path) {
-      console.error('❌ Analysis or ZIP not found');
+    if (error || !analysis) {
+      console.error('❌ Analysis not found or DB error');
       return res.status(404).json({ message: 'Report not found' });
     }
 
-    console.log(`✅ Found analysis, downloading ZIP...`);
+    // Determine ZIP path
+    // Video: annotated_frames_path
+    // Image: annotated_images_path
+    const zipPath = analysis.annotated_frames_path || analysis.annotated_images_path;
+
+    if (!zipPath) {
+      console.error('❌ No ZIP path in record');
+      return res.status(404).json({ message: 'Report ZIP not generated yet' });
+    }
+
+    console.log(`✅ Found analysis, downloading ZIP: ${zipPath}`);
 
     // Download the ZIP file from Supabase
     const { data: zipData, error: downloadError } = await supabaseAdmin
       .storage
       .from(analysis.bucket || process.env.SUPABASE_BUCKET_NAME || 'video_analyses')
-      .download(analysis.annotated_frames_path);
+      .download(zipPath);
 
     if (downloadError) {
       throw downloadError;
@@ -80,6 +140,71 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
       console.error('❌ No file');
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
+
+    // ---------------------------------------------------------
+    // TRIAL USER FLOW
+    // ---------------------------------------------------------
+    if (req.user.isTrial) {
+      console.log('🧪 Processing TRIAL upload');
+      const sessionId = req.user.trialSessionId;
+
+      // 1. Check Limits
+      const { data: session, error: sessionErr } = await supabaseAdmin
+        .from('trial_sessions')
+        .select('*')
+        .eq('id', sessionId)
+        .single();
+
+      if (sessionErr || !session) {
+        return res.status(401).json({ success: false, message: "Trial session not found" });
+      }
+
+      // Hard limit 100 as per requested update
+      if (session.analysis_count >= 100) {
+        return res.status(403).json({ success: false, message: "Trial limit reached." });
+      }
+
+      // 2. Upload to Trial Bucket
+      const analysisId = uuidv4();
+      const fileName = `${sessionId}/${analysisId}/${req.file.originalname}`;
+      const bucketName = 'trial_analyses'; // User existing bucket or new? assuming 'trial_analyses' from trial.analyze.js
+
+      const { error: uploadError } = await supabaseAdmin.storage
+        .from(bucketName)
+        .upload(fileName, req.file.buffer, {
+          contentType: req.file.mimetype,
+        });
+
+      if (uploadError) {
+        // If bucket doesn't exist, might fail. Assuming it exists since trial.js works.
+        console.error('Trial upload failed:', uploadError);
+        return res.status(500).json({ success: false, message: 'Upload failed' });
+      }
+
+      // 3. Increment Count
+      await supabaseAdmin
+        .from('trial_sessions')
+        .update({ analysis_count: session.analysis_count + 1 })
+        .eq('id', sessionId);
+
+      // 4. Construct Stateless ID (Base64)
+      // Format: trial|video|<bucket>|<path>
+      const rawId = `trial|video|${bucketName}|${fileName}`;
+      const encodedId = Buffer.from(rawId).toString('base64');
+
+      console.log('✅ Trial upload success. Stateless ID:', encodedId);
+
+      return res.json({
+        success: true,
+        message: 'Trial file uploaded',
+        data: {
+          analysis_id: encodedId,
+          filename: req.file.originalname,
+          file_path: fileName,
+        }
+      });
+    }
+    // ---------------------------------------------------------
 
     const analysisId = uuidv4();
     const fileName = `${userId}/${analysisId}/${req.file.originalname}`;
@@ -153,6 +278,19 @@ router.get('/', authMiddleware, async (req, res) => {
 
     console.log('📋 Fetching analyses for user:', userId);
 
+    // TRIAL USER CHECK
+    // TRIAL USER CHECK
+    if (req.user?.isTrial) {
+      console.log('⚠️ Trial user - history restricted');
+      // Return 200 so frontend doesn't treat as error, but include restricted flag
+      return res.json({
+        success: true,
+        trial_restricted: true,
+        data: [],
+        message: 'Analysis history is not available for trial users.'
+      });
+    }
+
     const { data: analyses, error } = await supabaseAdmin
       .from('analyses')
       .select('*')
@@ -181,6 +319,66 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
     console.log('🔍 Fetching analysis:', id);
 
+    // ---------------------------------------------------------
+    // TRIAL USER FLOW (Stateless Read)
+    // ---------------------------------------------------------
+    if (req.user?.isTrial) {
+      try {
+        const decoded = Buffer.from(id, 'base64').toString('utf8');
+        // video ID: trial|video|bucket|path
+        // image ID: trial|image|bucket|[paths]
+        if (decoded.startsWith('trial|')) {
+          console.log('🧪 Fetching TRIAL analysis (Stateless)');
+          const parts = decoded.split('|');
+          const type = parts[1];
+          const bucket = parts[2];
+          let folder = '';
+
+          if (type === 'video') {
+            // path is parts[3]... (join rest)
+            const fullPath = parts.slice(3).join('|');
+            folder = fullPath.split('/').slice(0, -1).join('/');
+          } else if (type === 'image') {
+            // path is JSON array
+            try {
+              const paths = JSON.parse(parts.slice(3).join('|'));
+              folder = paths[0].split('/').slice(0, 2).join('/');
+            } catch (e) { console.error('Error parsing image paths', e); }
+          }
+
+          if (bucket && folder) {
+            const resultPath = `${folder}/analysis_result.json`;
+            const { data, error } = await supabaseAdmin.storage
+              .from(bucket)
+              .download(resultPath);
+
+            if (data) {
+              const jsonStr = await data.text();
+              const result = JSON.parse(jsonStr);
+              return res.json({ success: true, data: result });
+            } else {
+              // File not found -> Analysis likely still processing (or failed)
+              // Return a mock pending object so frontend waits
+              return res.json({
+                success: true,
+                data: {
+                  id: id,
+                  status: 'processing',
+                  filename: 'Processing...',
+                  created_at: new Date().toISOString()
+                }
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.log('Not a stateless ID or error reading:', e.message);
+      }
+      // Fallback: If decoding fails or not trial format, return 404 to avoid DB crash
+      return res.status(404).json({ success: false, message: 'Trial analysis not found' });
+    }
+
+    // STANDARD FLOW
     const { data: analysis, error } = await supabaseAdmin
       .from('analyses')
       .select('*')
@@ -197,6 +395,10 @@ router.get('/:id', authMiddleware, async (req, res) => {
     res.json({ success: true, data: analysis });
   } catch (error) {
     console.error('❌ Error:', error.message);
+    // Invalid UUID is common if we passed a trial ID to non-trial logic, catches here too
+    if (error.message.includes('invalid input syntax for type uuid')) {
+      return res.status(404).json({ success: false, message: 'Analysis not found' });
+    }
     res.status(500).json({ success: false, message: 'Error fetching analysis' });
   }
 });
@@ -224,6 +426,49 @@ router.delete('/:id', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Analysis ID is required' });
     }
 
+    // ---------------------------------------------------------
+    // TRIAL USER FLOW (Stateless Delete)
+    // ---------------------------------------------------------
+    if (req.user?.isTrial) {
+      try {
+        const decoded = Buffer.from(analysisId, 'base64').toString('utf8');
+        if (decoded.startsWith('trial|')) {
+          console.log('🧪 Deleting TRIAL analysis (Stateless)');
+          const parts = decoded.split('|');
+          const type = parts[1];
+          const bucket = parts[2];
+
+          let folder = '';
+          if (type === 'video') {
+            // trial|video|bucket|path -> folder is path's parent
+            const fullPath = parts.slice(3).join('|');
+            folder = fullPath.split('/').slice(0, -1).join('/');
+          } else if (type === 'image') {
+            // trial|image|bucket|[paths] -> folder is first path's parent
+            try {
+              const paths = JSON.parse(parts.slice(3).join('|'));
+              folder = paths[0].split('/').slice(0, 2).join('/');
+            } catch (e) { }
+          }
+
+          if (bucket && folder) {
+            console.log(`🗑️ Deleting trial folder: ${folder} from ${bucket}`);
+            const { data: list, error: listErr } = await supabaseAdmin.storage.from(bucket).list(folder);
+
+            if (list && list.length > 0) {
+              const filesToRemove = list.map(f => `${folder}/${f.name}`);
+              await supabaseAdmin.storage.from(bucket).remove(filesToRemove);
+              console.log(`✅ Deleted ${filesToRemove.length} trial files`);
+            }
+            return res.json({ success: true, message: "Trial analysis deleted" });
+          }
+        }
+      } catch (e) {
+        console.log('Trial delete error:', e);
+      }
+      return res.status(404).json({ success: false, message: "Trial analysis not found" });
+    }
+
     console.log(`\n📊 FETCHING ANALYSIS RECORD:`);
     const { data: analysis, error: selectError } = await supabaseAdmin
       .from('analyses')
@@ -248,13 +493,21 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     const filesToDelete = [];
 
     if (analysis.file_path) {
-      filesToDelete.push(analysis.file_path);
-      console.log(`\n📝 Will delete video: ${analysis.file_path}`);
+      // Handle array of paths for images
+      try {
+        const paths = JSON.parse(analysis.file_path);
+        if (Array.isArray(paths)) filesToDelete.push(...paths);
+        else filesToDelete.push(analysis.file_path);
+      } catch {
+        filesToDelete.push(analysis.file_path);
+      }
+      console.log(`\n📝 Will delete source file(s)`);
     }
 
-    if (analysis.annotated_frames_path) {
-      filesToDelete.push(analysis.annotated_frames_path);
-      console.log(`📝 Will delete ZIP: ${analysis.annotated_frames_path}`);
+    if (analysis.annotated_frames_path || analysis.annotated_images_path) {
+      const zip = analysis.annotated_frames_path || analysis.annotated_images_path;
+      filesToDelete.push(zip);
+      console.log(`📝 Will delete ZIP: ${zip}`);
     }
 
     if (filesToDelete.length > 0) {
@@ -289,10 +542,10 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
     console.log(`✅ Database record deleted\n`);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Analysis and all associated files deleted successfully',
-      data: { 
+      data: {
         analysisId,
         filesDeleted: filesToDelete.length,
         deletedFiles: filesToDelete
@@ -301,8 +554,8 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 
   } catch (error) {
     console.error(`\n❌ DELETE ERROR: ${error.message}\n`);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: error.message || 'Failed to delete analysis'
     });
   }
@@ -313,10 +566,10 @@ router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user?.id;
-    const { 
-      status, 
-      confidence_score, 
-      is_deepfake, 
+    const {
+      status,
+      confidence_score,
+      is_deepfake,
       analysis_result,
       frames_to_analyze,
       annotated_frames_path

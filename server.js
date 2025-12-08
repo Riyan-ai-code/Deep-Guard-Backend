@@ -8,6 +8,7 @@ const errorHandler = require("./middleware/errorHandler");
 const authMiddleware = require("./middleware/auth");
 
 const trialRoutes = require("./routes/trial.analyze");
+const trialAuthRoutes = require("./routes/trial");
 dotenv.config();
 
 /* ---------------------- ROUTES ---------------------- */
@@ -40,6 +41,7 @@ app.use(express.static(path.join(__dirname, "public")));
 // AUTH (no auth middleware here)
 app.use("/auth", authRoutes);
 app.use("/api/trial", trialRoutes);
+app.use("/api/trial", trialAuthRoutes);
 // ACCOUNT ROUTES
 app.use("/api/account", authMiddleware, accountRoutes);
 

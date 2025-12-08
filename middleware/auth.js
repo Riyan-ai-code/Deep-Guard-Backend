@@ -6,8 +6,8 @@ const crypto = require("crypto");
 // Must match controller cookie options
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax",
+  secure: true,
+  sameSite: "none",
   path: "/",
 };
 
@@ -18,6 +18,24 @@ const authMiddleware = async (req, res, next) => {
   try {
     const accessToken = req.cookies.accessToken || null;
     const refreshToken = req.cookies.refreshToken || null;
+
+    // START TRIAL AUTH CHECK
+    const trialToken = req.cookies.trialAccess;
+    if (trialToken) {
+      try {
+        const decodedTrial = jwt.verify(trialToken, process.env.JWT_SECRET);
+        // If valid, short-circuit standard auth
+        req.user = {
+          id: 'trial_user',
+          name: 'Guest User',
+          email: 'guest@trial.com',
+          isTrial: true,
+          trialSessionId: decodedTrial.sessionId
+        };
+        return next();
+      } catch (e) { /* ignore and proceed to standard auth */ }
+    }
+    // END TRIAL AUTH CHECK
 
     if (!accessToken && !refreshToken) {
       return res.status(401).json({

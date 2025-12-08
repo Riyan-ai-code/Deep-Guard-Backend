@@ -13,8 +13,8 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // -------------------------------------------------
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax",
+  secure: true,
+  sameSite: "none",
   path: "/"
 };
 
@@ -50,15 +50,23 @@ const setAuthCookies = (res, access, refresh) => {
 const clearAuthCookies = (res) => {
   res.clearCookie("accessToken", {
     httpOnly: true,
-    sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: "none",
+    secure: true,
     path: "/",
   });
 
   res.clearCookie("refreshToken", {
     httpOnly: true,
-    sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: "none",
+    secure: true,
+    path: "/",
+  });
+
+  // Clear trial cookie too
+  res.clearCookie("trialAccess", {
+    httpOnly: true,
+    sameSite: "none",
+    secure: true,
     path: "/",
   });
 };
@@ -448,6 +456,17 @@ exports.refresh = async (req, res) => {
 // GET ME
 // -----------------------------------------------------
 exports.getMe = (req, res) => {
+  // START TRIAL SUPPORT
+  if (req.user?.isTrial) {
+    return res.json({
+      id: 'trial_user',
+      name: 'Guest User',
+      email: 'guest@trial.com',
+      profilePicture: `https://api.dicebear.com/7.x/avataaars/svg?seed=guest`,
+      isTrial: true
+    });
+  }
+  // END TRIAL SUPPORT
   res.json(formatUser(req.user));
 };
 
