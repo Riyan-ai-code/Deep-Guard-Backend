@@ -32,20 +32,51 @@ exports.getRepoStats = async (req, res) => {
 };
 
 exports.getContributors = async (req, res) => {
-    const { owner, repo } = req.query;
-
-    if (!owner || !repo) {
-        return res.status(400).json({ error: 'Owner and repo are required' });
-    }
+    // We ignore the specific repo param and fetch from all three
+    const { owner } = req.query;
+    // Default to the known owner if not provided, or use query param
+    const targetOwner = owner || 'Riyan-ai-code';
+    const repos = ['Deep-Guard-Frontend', 'Deep-Guard-Backend', 'Deep-Guard-ML-Engine'];
 
     try {
-        const response = await axios.get(`https://api.github.com/repos/${owner}/${repo}/contributors?per_page=12`, {
-            headers: getGithubHeaders()
+        // Fetch all in parallel
+        const requests = repos.map(repo =>
+            axios.get(`https://api.github.com/repos/${targetOwner}/${repo}/contributors?per_page=100`, {
+                headers: getGithubHeaders()
+            }).catch(err => {
+                console.error(`Failed to fetch contributors for ${repo}:`, err.message);
+                return { data: [] }; // Return empty on failure to not break everything
+            })
+        );
+
+        const results = await Promise.all(requests);
+
+        // Aggregate results
+        const contributorMap = new Map();
+
+        results.forEach(result => {
+            const data = result.data || [];
+            data.forEach(user => {
+                const existing = contributorMap.get(user.login);
+                if (existing) {
+                    existing.contributions += user.contributions;
+                } else {
+                    contributorMap.set(user.login, {
+                        ...user, // Keep user details (avatar, url, etc)
+                        contributions: user.contributions
+                    });
+                }
+            });
         });
-        res.status(200).json(response.data);
+
+        // Convert back to array and sort
+        const aggregatedContributors = Array.from(contributorMap.values())
+            .sort((a, b) => b.contributions - a.contributions);
+
+        res.status(200).json(aggregatedContributors);
     } catch (error) {
-        console.error(`GitHub API Error (Contributors: ${owner}/${repo}):`, error.message);
-        res.status(500).json({ error: 'Failed to fetch contributors' });
+        console.error(`GitHub API Error (Aggregation):`, error.message);
+        res.status(500).json({ error: 'Failed to fetch aggregated contributors' });
     }
 };
 
