@@ -3,11 +3,13 @@ const jwt = require("jsonwebtoken");
 const { supabase } = require("../config/supabase");
 const crypto = require("crypto");
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 // Must match controller cookie options
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: true,
-  sameSite: "none",
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
   path: "/",
 };
 

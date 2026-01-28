@@ -11,10 +11,12 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // -------------------------------------------------
 // COOKIE OPTIONS (MUST MATCH middleware)
 // -------------------------------------------------
+const isProduction = process.env.NODE_ENV === 'production';
+
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: true,
-  sameSite: "none",
+  secure: isProduction, // Secure in Prod, Not in Dev
+  sameSite: isProduction ? "none" : "lax", // None for Cross-Site Prod, Lax for Local
   path: "/"
 };
 

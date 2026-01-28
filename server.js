@@ -18,6 +18,8 @@ const mlServices = require("./routes/ml-service");
 const analysisRouter = require("./routes/analysis");
 const imageAnalysisRoutes = require("./routes/analysis-image-upload");
 const mlServiceImagesRoutes = require("./routes/ml-service-images");
+const githubRoutes = require("./routes/github");
+const supportRoutes = require("./routes/support");
 
 const app = express();
 
@@ -56,6 +58,13 @@ app.use("/api/analysis", authMiddleware, analysisRouter);
 app.use("/api/ml/images", authMiddleware, mlServiceImagesRoutes);
 app.use("/api/ml/analyze", authMiddleware, mlServices);
 // ******************************************* //
+
+// GitHub Integration
+app.use("/api/github", githubRoutes);
+
+// Support & Bug Reporting
+app.use("/api/support", supportRoutes);
+// Keep Alive
 
 app.get("/", (req, res) => {
   res.json({ status: "Backend running 🚀" });
