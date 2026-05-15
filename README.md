@@ -71,6 +71,33 @@ Deep Guard Backend is a robust RESTful API built with [Node.js](https://nodejs.o
 -   **Development:** `npm run dev` (uses `nodemon`)
 -   **Production:** `npm start`
 
+### Docker
+
+If you prefer to run the backend in a container, use the included Dockerfile from the `Deep-Guard-Backend` directory.
+
+1.  Build the image:
+    ```bash
+    docker build -t deep-guard-backend .
+    ```
+
+2.  Run the container with your environment file:
+    ```bash
+    docker run --rm -p 5000:5000 --env-file .env deep-guard-backend
+    ```
+
+3.  Make sure `ML_API_URL` and `ML_IMAGE_URL` point to a reachable ML service from inside the container.
+
+## ⏰ Keep-Alive Workflow Note
+
+This repository includes:
+
+-   `.github/workflows/keep-alive.yml` to periodically call the Supabase keep-alive endpoint.
+-   `.github/workflows/repository-heartbeat.yml` to create a monthly heartbeat commit on the default branch and help prevent GitHub from marking scheduled workflows as inactive.
+
+If the repository is inactive for 60 days, GitHub automatically disables scheduled workflows in public repositories. The heartbeat workflow helps prevent that inactivity window, but it cannot repair the situation after GitHub has already disabled scheduled workflows, because the scheduler is no longer running.
+
+If that happens, re-enable the workflow manually in GitHub or trigger it from an external scheduler or service.
+
 ## 🔑 Key Features
 
 ### 1. Authentication System
@@ -94,7 +121,7 @@ Deep Guard Backend is a robust RESTful API built with [Node.js](https://nodejs.o
 
 ```
 Deep-Guard-Backend/
-├── .github/          # GitHub Actions (Keep-Alive Workflow)
+├── .github/          # GitHub Actions workflows
 ├── config/           # Supabase client configuration
 ├── controllers/      # Business logic (Auth, Analysis, Trial, Github)
 ├── middleware/       # Auth checks, File upload limits, Error handling
